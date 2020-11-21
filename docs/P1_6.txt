@@ -1,0 +1,222 @@
+#include "paperwidget.h"
+
+PaperWidget::PaperWidget(QWidget *parent) : QWidget(parent)
+{
+    // 预留的接口，MUJI知道会用来干嘛啊
+}
+
+PaperWidget::PaperWidget(const QString& _UID, QWidget *parent):
+    QWidget(parent), UID(_UID)
+{
+    init();
+    show();
+}
+
+PaperWidget::~PaperWidget()
+{
+    // 果然和我想的一样，当 Qt 中的组件使用 setLayout or addWidget 这类
+    // 的函数后，被操纵的组件的生存周期便，完完全全的交由上级控制
+
+    if (readWidget != nullptr)
+    {
+        readWidget->close();
+        delete readWidget;
+    }
+}
+
+void
+PaperWidget::init()
+{
+    resize(815, 600);
+    // 禁止改变窗体大小 - 等待添加函数
+
+    // NO.1 设置 Tags 区域的 UI
+    paperKindsList = new QListWidget;
+    paperKindsList->setParent(this);
+    paperKindsList->setGeometry(10, 280, 240, 250);
+
+    QVector<QString> paperColumns = {QStringLiteral("小说"), QStringLiteral("科技"), QStringLiteral("社会"),
+                                     QStringLiteral("历史"), QStringLiteral("经济"), QStringLiteral("科幻") };
+    for (int i = 0; i < paperColumns.count(); i++)
+    {
+        paperKindsList->addItem(paperColumns[i]);
+    }
+    connect(paperKindsList, SIGNAL(currentRowChanged(int)), this, SLOT(SLOT_paperTagsList_CLICKED(int)));
+
+
+    // NO.2 设置 paperWidget 区域的 UI
+    paperStackedWidget = new QStackedWidget;
+    for (int i = 0; i < paperKindsList->count(); i++)
+    {
+        QString tag = paperKindsList->item(i)->text();
+        qDebug() << "tag: " << tag;
+        init_paperShowList(tag);
+    }
+    paperStackedWidget->setCurrentIndex(0);
+
+
+    // mainLayout->addWidget(paperListScrollWidget);
+    // 掌握新技能点： QWidget 实例如果想添加附属组件，不需要通过（也不能） addWidget() 函数来实现附属组件的添加
+    // 而是通过，对附属组件设置 setParent(this) 方式，即可将附属组件添加到 “上层组件” 中，
+    // 待附属组件添加完成之后，再对其使用 setGeometry(x, y, width, hight) ,
+    // 那么，这里所操作的坐标系，便是相对坐标
+
+    // NO.3 设置 info 区域的 UI
+    userGroupBox = new QGroupBox("USER INFO");
+    userPixmap = new QLabel;
+    userPixmap->setParent(userGroupBox);
+    userName = new QLabel;
+    userName->setParent(userGroupBox);
+    paperCount = new QLabel("i am paperCount");
+    paperCount->setParent(userGroupBox);
+    paperKindsCount = new QLabel("i am paperKindsCount");
+    paperKindsCount->setParent(userGroupBox);
+
+    userPixmap->setGeometry(5, 15, 235, 140);
+    userName->setGeometry(5, 150, 120, 30);
+    paperCount->setGeometry(3, 190, 120, 30);
+    paperKindsCount->setGeometry(3, 230, 120, 30);
+
+    //init_Info();
+
+    userGroupBox->setParent(this);
+    userGroupBox->setGeometry(10, 10, 240, 266);
+
+
+    // NO.4 设置进入文章写作空间的按钮
+    writePtn = new QPushButton(this);
+    writePtn->setText(QStringLiteral("进入创作空间"));
+    writePtn->setGeometry(10, 540, 130, 50);
+
+}
+
+
+/*
+ *  argument: const QString &paperTag 用于 init_paperList 方法的封装
+ *  使用这种封装方式之后，可以将初始化 文章列表 的功能可用于 QStackWidget 栈组件的页面跳转更新
+ *  文章展示内容：
+ *      1. 文章名
+ *      2. 作者
+ *      3. 内容摘要
+ *      4. 文章发布时间
+ *  点击对应文章后，跳转进入文章阅读界面
+ */
+void
+PaperWidget::init_paperShowList(const QString &paperTag)
+{
+    paperListViewWidget = new QWidget;
+    paperListScrollWidget = new QScrollArea;
+    paperListWidgetLayout = new QVBoxLayout;
+
+    QString strCMD = QString("select * "
+                             "from table1, paperLists "
+                             "where table1.UID=paperLists.UID and table1.UID=%1 and paperTag='%2'").arg(UID).arg(paperTag);
+    QSqlQuery infoQuery;
+    if(infoQuery.exec(strCMD))
+        qDebug() << "exec() TRUE";
+    else qDebug() << "exec() FALSE";
+
+    qDebug() << "->next()";
+    while (infoQuery.next())
+    {
+        QPushButton *ptn = new QPushButton;
+        QString paperTitle = infoQuery.value("paperTitle").toString();
+        QString userName = infoQuery.value("userName").toString();
+        QString startTime = infoQuery.value("startTime").toString();
+        QString paperIDTOptn = infoQuery.value("ID").toString();
+
+        ptn->setObjectName(paperIDTOptn);                   // 为每个文章按钮添加 objectName，用户槽函数对信号发射者的反向搜索
+        qDebug() << "ObjectName() = " << ptn->objectName();
+        ptn->setText(QString("Title: %1\nAuthor: %2\nCreateTime: %3").arg(paperTitle).arg(userName).arg(startTime));
+        qDebug() << "QPushButton::Text() = " << ptn->text();
+        ptn->setMinimumSize(QSize(500, 80));
+
+        connect(ptn, SIGNAL(clicked()), this, SLOT(SLOT_paperPtnList_CLICKED()));
+
+        paperListWidgetLayout->addWidget(ptn);
+    }
+
+    paperListViewWidget->setLayout(paperListWidgetLayout);  // 实体的存储 众多文章按钮 的 “大型” 组件
+    paperListScrollWidget->setWidget(paperListViewWidget);  // 用于展示 “大型” 组件的窗口，通过滑动条来移动观察被观察对象的其他部分
+    paperStackedWidget->addWidget(paperListScrollWidget);
+    paperStackedWidget->setParent(this);
+    paperStackedWidget->setGeometry(260, 10, 550, 580);
+}
+
+/* 未完成 后续填补 */
+void
+PaperWidget::init_Info()
+{
+    // userPixmap 设置用户画像
+    QPixmap tmpPixiv(":/Image/default.jpg");
+    userPixmap->setPixmap(tmpPixiv.scaled(QSize(220, 140), Qt::IgnoreAspectRatio));
+
+    // userName 设置用户的用户名
+    QString name;
+    QSqlQuery infoQuery;
+    QString userInfo = QString("select userName from table1 where ID='%1'").arg(UID);
+    if (infoQuery.exec(userInfo) && infoQuery.next())
+    {
+        name = infoQuery.value("userName").toString();
+    } else {
+        name = "~WoW~";
+    }
+    userName->setText(name);
+
+    // paperCount 设置用户发布的文章数量
+    userInfo = QString("select ID from paperLists where UID='%1'").arg(UID);
+    if (infoQuery.exec(userInfo))
+    {
+        paperCount->setText(QString("%1").arg(infoQuery.size()));
+    } else {
+        paperCount->setText("?=w=?");
+    }
+
+    // paperKindsCount 设置用户创建的文章标签数
+    userInfo = QString("select UID from paperLists group by UID");
+}
+
+/*
+ * Function:
+ *      1. get the path of the paper of user chooise
+ *      2. create the new Widget of read paper
+*/
+void
+PaperWidget::SLOT_paperPtnList_CLICKED()
+{
+    // 反向搜索信号的发射者
+    QPushButton *ptn = qobject_cast<QPushButton*>(sender());
+    QString ptnName = ptn->objectName();
+    QString tmpPath = Path;
+
+    QString strCMD = QString("select * "
+                             "from paperLists "
+                             "where ID=%1").arg(ptnName);
+    QSqlQuery query;
+    if (query.exec(strCMD))
+    {
+        while (query.next())    // aaaa，搞了半天的错误，尽然只是没有使用 next()，将内部指针指向一个具有实际意义的数据条目
+        {
+            QString tmp = query.value("paperPath").toString();
+            tmpPath.append(tmp);
+            qDebug() << "paper Path: " <<tmpPath;
+        }
+    } else {
+        tmpPath.append("default.txt");
+        qDebug() << "It's failed for get paper Path (;";
+    }
+
+    // readWidget = new ReadWidget;
+}
+
+void
+PaperWidget::SLOT_paperTagsList_CLICKED(int currentRow)
+{
+    paperStackedWidget->setCurrentIndex(currentRow);
+}
+
+void
+PaperWidget::SLOT_writePtn_CLICKED()
+{
+    // writeWidget = new WriteWidget;
+}
